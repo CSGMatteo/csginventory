@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Inventory Barcode Scanner</title>
+
+<!-- Load QuaggaJS -->
+<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+
+<style>
+  body { 
+    font-family: Arial; 
+    text-align: center; 
+    padding: 20px; 
+    font-size: 22px; /* bigger text for mobile */
+  }
+  #video {
+    width: 100%;
+    max-width: 600px;  /* larger video box */
+    height: 400px;     /* taller box */
+    border: 3px solid #333;
+    border-radius: 12px;
+    margin: 15px auto;
+    position: relative;
+    overflow: hidden;
+  }
+  #video video, #video canvas {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+    display: block;
+    margin: 0 auto;
+  }
+  #result {
+    margin-top: 25px;
+    font-size: 24px;  /* bigger results text */
+    padding: 15px;
+    border: 2px solid #ccc;
+    border-radius: 12px;
+    background: #f9f9f9;
+  }
+  #manual-input {
+    margin-top: 25px;
+  }
+  input {
+    padding: 12px;
+    font-size: 20px;
+    width: 260px;
+  }
+  button {
+    padding: 12px 16px;
+    font-size: 20px;
+    margin-left: 8px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<h1>📦 Inventory Barcode Scanner</h1>
+
+<div id="video"></div>
+
+<div id="manual-input">
+  <input type="text" id="barcodeInput" placeholder="Enter barcode">
+  <button onclick="lookupBarcode()">Search</button>
+</div>
+
+<div id="result">Waiting for scan...</div>
+
+<script>
+const resultDiv = document.getElementById('result');
+const barcodeInput = document.getElementById('barcodeInput');
+
+// Replace with your Google Sheet CSV export link
+const SHEET_URL = "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" + new Date().getTime();
+
+let inventoryData = {};
+
+// Load inventory from Google Sheet
+async function loadInventory() {
+  try {
+    const response = await fetch(SHEET_URL);
+    const text = await response.text();
+    const rows = text.split("\n").map(r => r.split(","));
+    const headers = rows[0];
+    rows.slice(1).forEach(row => {
+      if (row.length > 0 && row[0].trim() !== "") {
+        const entry = {};
+        headers.forEach((h, i) => entry[h.trim()] = row[i] ? row[i].trim() : "");
+        inventoryData[row[0].trim()] = entry;
+      }
+    });
+    console.log("✅ Inventory loaded:", inventoryData);
+  } catch (e) {
+    console.error("Error loading inventory:", e);
+    resultDiv.innerText = "Failed to load inventory. Check the CSV link.";
+  }
+}
+
+// Show item details (only item + price now)
+function showResult(barcode) {
+  if (inventoryData[barcode]) {
+    const item = inventoryData[barcode];
+    resultDiv.innerHTML = `
+      <strong>Item:</strong> ${item["Item Name"]}<br>
+      <strong>Price:</strong> ${item["Price"]}
+    `;
+  } else {
+    resultDiv.innerHTML = `<strong>Code:</strong> ${barcode}<br>No match found in inventory.`;
+  }
+}
+
+// Manual barcode lookup
+function lookupBarcode() {
+  const barcode = barcodeInput.value.trim();
+  if (barcode) showResult(barcode);
+}
+
+// Initialize QuaggaJS scanner
+function startScanner() {
+  loadInventory().then(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      resultDiv.innerText = "Camera not supported on this device.";
+      return;
+    }
+
+    Quagga.init({
+      inputStream: {
+        name: "Live",
+        type: "LiveStream",
+        target: document.querySelector('#video'),
+        constraints: {
+          facingMode: "environment",
+          width: { ideal: 1920 },  // higher resolution for phones
+          height: { ideal: 1080 }
+        }
+      },
+      decoder: { readers: ["code_128_reader"] },
+      locate: true
+    }, function(err) {
+      if (err) {
+        console.error("Quagga init error:", err);
+        resultDiv.innerText = "Error starting scanner. Check camera permissions or HTTPS.";
+        return;
+      }
+      Quagga.start();
+      console.log("🎥 Scanner started");
+    });
+
+    Quagga.onDetected(data => {
+      const code = data.codeResult.code;
+      showResult(code);
+    });
+  });
+}
+
+// Start scanner after page loads
+document.addEventListener("DOMContentLoaded", startScanner);
+</script>
+</body>
+</html>
