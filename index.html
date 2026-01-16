@@ -175,19 +175,58 @@ function lookupManual() {
     return;
   }
 
-  // Partial item name match
+  // Collect partial name matches
+  const matches = [];
+
   for (const barcode in inventoryData) {
     const itemName = inventoryData[barcode]["Item Name"]?.toLowerCase();
     if (itemName && itemName.includes(input)) {
-      showResult(barcode);
-      return;
+      matches.push({
+        barcode,
+        name: inventoryData[barcode]["Item Name"],
+        price: inventoryData[barcode]["Price"]
+      });
     }
   }
 
-  resultDiv.innerHTML = `
-    <div>No match found</div><br>
-    <button onclick="unlockScanner()">📷 Try Again</button>
-  `;
+  // No matches
+  if (matches.length === 0) {
+    resultDiv.innerHTML = `
+      <div>No matches found</div><br>
+      <button onclick="unlockScanner()">📷 Try Again</button>
+    `;
+    return;
+  }
+
+  // Single match → auto-select
+  if (matches.length === 1) {
+    showResult(matches[0].barcode);
+    return;
+  }
+
+  // Multiple matches → show list
+  let html = `<div style="margin-bottom:16px;">Multiple matches:</div>`;
+
+  matches.forEach(m => {
+    html += `
+      <div style="
+        border:2px solid #333;
+        border-radius:12px;
+        padding:14px;
+        margin-bottom:12px;
+        background:#fff;
+      ">
+        <div>${m.name}</div>
+        <div style="font-size:24px;margin:6px 0;">
+          ${m.price}
+        </div>
+        <button onclick="showResult('${m.barcode}')">Select</button>
+      </div>
+    `;
+  });
+
+  html += `<button onclick="unlockScanner()">Cancel</button>`;
+  resultDiv.innerHTML = html;
 }
 
 // Start scanner
