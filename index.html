@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Inventory Barcode Scanner</title>
 
-<!-- Load QuaggaJS -->
 <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
 
 <style>
@@ -26,7 +25,7 @@
   #video {
     width: 100%;
     max-width: 650px;
-    height: 260px;            /* SHORTER camera window */
+    height: 260px;
     border: 4px solid #222;
     border-radius: 16px;
     margin: 20px auto;
@@ -34,7 +33,6 @@
     overflow: hidden;
   }
 
-  /* Red guide line for scanning */
   #video::after {
     content: "";
     position: absolute;
@@ -51,10 +49,6 @@
     height: 100% !important;
     object-fit: cover;
     display: block;
-  }
-
-  #manual-input {
-    margin-top: 20px;
   }
 
   input {
@@ -93,58 +87,60 @@
 
 <div id="video"></div>
 
-<div id="manual-input">
-  <input type="text" id="barcodeInput" placeholder="Enter barcode"
-         onkeydown="if(event.key==='Enter') lookupBarcode()">
-  <button onclick="lookupBarcode()">Search</button>
-</div>
+<input
+  type="text"
+  id="barcodeInput"
+  placeholder="Enter barcode or item name"
+  onkeydown="if(event.key==='Enter') lookupManual()"
+/>
+
+<button onclick="lookupManual()">Search</button>
 
 <div id="result">Waiting for scan...</div>
 
 <script>
-const resultDiv = document.getElementById('result');
-const barcodeInput = document.getElementById('barcodeInput');
+const resultDiv = document.getElementById("result");
+const barcodeInput = document.getElementById("barcodeInput");
 
-// 🔒 Scan lock
 let scanLocked = false;
 
-// Google Sheet CSV link
 const SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t="
   + new Date().getTime();
 
 let inventoryData = {};
 
-// Load inventory
+// Load inventory safely (handles commas)
 async function loadInventory() {
-  try {
-    const response = await fetch(SHEET_URL);
-    const text = await response.text();
-    const rows = text.split("\n").map(r =>
-      r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
-    );
-    const headers = rows[0];
+  const response = await fetch(SHEET_URL);
+  const text = await response.text();
 
-    rows.slice(1).forEach(row => {
-      if (row[0]) {
-        const entry = {};
-        headers.forEach((h, i) => entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "");
-        inventoryData[row[0].trim()] = entry;
-      }
+  const rows = text.split("\n").map(r =>
+    r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
+  );
+
+  const headers = rows[0];
+
+  rows.slice(1).forEach(row => {
+    if (!row[0]) return;
+
+    const entry = {};
+    headers.forEach((h, i) => {
+      entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
     });
-  } catch (e) {
-    resultDiv.innerText = "Failed to load inventory.";
-  }
+
+    inventoryData[row[0].trim()] = entry;
+  });
 }
 
-// Show result + lock scanner
+// Display result and lock scanner
 function showResult(barcode) {
   scanLocked = true;
-
   if (navigator.vibrate) navigator.vibrate(100);
 
-  if (inventoryData[barcode]) {
-    const item = inventoryData[barcode];
+  const item = inventoryData[barcode];
+
+  if (item) {
     resultDiv.innerHTML = `
       <div><strong>Item:</strong> ${item["Item Name"]}</div>
       <div style="font-size:38px;margin:12px 0;">
@@ -168,10 +164,30 @@ function unlockScanner() {
   barcodeInput.value = "";
 }
 
-// Manual lookup
-function lookupBarcode() {
-  const barcode = barcodeInput.value.trim();
-  if (barcode) showResult(barcode);
+// 🔍 Manual search (barcode OR partial item name)
+function lookupManual() {
+  const input = barcodeInput.value.trim().toLowerCase();
+  if (!input) return;
+
+  // Exact barcode match first
+  if (inventoryData[input]) {
+    showResult(input);
+    return;
+  }
+
+  // Partial item name match
+  for (const barcode in inventoryData) {
+    const itemName = inventoryData[barcode]["Item Name"]?.toLowerCase();
+    if (itemName && itemName.includes(input)) {
+      showResult(barcode);
+      return;
+    }
+  }
+
+  resultDiv.innerHTML = `
+    <div>No match found</div><br>
+    <button onclick="unlockScanner()">📷 Try Again</button>
+  `;
 }
 
 // Start scanner
@@ -181,17 +197,17 @@ function startScanner() {
       inputStream: {
         name: "Live",
         type: "LiveStream",
-        target: document.querySelector('#video'),
+        target: document.querySelector("#video"),
         constraints: {
           facingMode: "environment",
           width: { ideal: 1920 },
           height: { ideal: 1080 }
         },
-        area: {             // scan only center band
+        area: {
           top: "40%",
-          right: "10%",
+          bottom: "40%",
           left: "10%",
-          bottom: "40%"
+          right: "10%"
         }
       },
       decoder: { readers: ["code_128_reader"] },
@@ -216,3 +232,4 @@ document.addEventListener("DOMContentLoaded", startScanner);
 
 </body>
 </html>
+
