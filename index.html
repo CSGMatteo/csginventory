@@ -119,7 +119,22 @@ const SHEET_URL =
 
 let inventoryData = {};
 
-// Load inventory (supports commas safely)
+/* ===============================
+   SIZE QUOTE FIX (DISPLAY ONLY)
+================================ */
+function formatSizeQuotes(text) {
+  if (!text) return "";
+
+  // Add quotes to fractions like 3/4 or 3-1/4
+  text = text.replace(/\b(\d+(?:-\d+)?\/\d+)\b/g, '$1"');
+
+  // Add quotes to whole numbers after x (e.g. x 5)
+  text = text.replace(/x\s*(\d+)\b/g, 'x $1"');
+
+  return text;
+}
+
+// Load inventory
 async function loadInventory() {
   const response = await fetch(SHEET_URL);
   const text = await response.text();
@@ -150,7 +165,7 @@ function showVariant(barcode, item) {
   if (navigator.vibrate) navigator.vibrate(100);
 
   resultDiv.innerHTML = `
-    <div>${item["Item Name"]}</div>
+    <div>${formatSizeQuotes(item["Item Name"])}</div>
     <div style="font-size:38px;margin:12px 0;">
       ${item["Price"]}
     </div>
@@ -167,7 +182,7 @@ function showVariants(barcode, items) {
   items.forEach(item => {
     html += `
       <div class="variant">
-        <div>${item["Item Name"]}</div>
+        <div>${formatSizeQuotes(item["Item Name"])}</div>
         <div style="font-size:28px;margin:6px 0;">
           ${item["Price"]}
         </div>
@@ -200,18 +215,16 @@ function handleBarcode(barcode) {
   }
 }
 
-// Manual search (barcode OR item name)
+// Manual search
 function lookupManual() {
   const input = barcodeInput.value.trim().toLowerCase();
   if (!input) return;
 
-  // Exact barcode match
   if (inventoryData[input]) {
     handleBarcode(input);
     return;
   }
 
-  // Partial item name search
   const matches = [];
 
   for (const barcode in inventoryData) {
@@ -240,7 +253,7 @@ function lookupManual() {
   matches.forEach(m => {
     html += `
       <div class="variant">
-        <div>${m.item["Item Name"]}</div>
+        <div>${formatSizeQuotes(m.item["Item Name"])}</div>
         <div style="font-size:28px;margin:6px 0;">
           ${m.item["Price"]}
         </div>
