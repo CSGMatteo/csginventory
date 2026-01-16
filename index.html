@@ -66,6 +66,7 @@
     max-width: 420px;
     cursor: pointer;
     border-radius: 14px;
+    margin-top: 8px;
   }
 
   #result {
@@ -77,6 +78,14 @@
     background: #f4f4f4;
     line-height: 1.4;
     font-weight: bold;
+  }
+
+  .variant {
+    border: 2px solid #333;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+    background: #fff;
   }
 </style>
 </head>
@@ -110,7 +119,7 @@ const SHEET_URL =
 
 let inventoryData = {};
 
-// Load inventory safely (handles commas)
+// Load inventory (supports commas safely)
 async function loadInventory() {
   const response = await fetch(SHEET_URL);
   const text = await response.text();
@@ -129,67 +138,90 @@ async function loadInventory() {
       entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
     });
 
-    inventoryData[row[0].trim()] = entry;
+    const barcode = row[0].trim();
+    if (!inventoryData[barcode]) inventoryData[barcode] = [];
+    inventoryData[barcode].push(entry);
   });
 }
 
-// Display result and lock scanner
-function showResult(barcode) {
+// Display single variant
+function showVariant(barcode, item) {
   scanLocked = true;
   if (navigator.vibrate) navigator.vibrate(100);
 
-  const item = inventoryData[barcode];
+  resultDiv.innerHTML = `
+    <div>${item["Item Name"]}</div>
+    <div style="font-size:38px;margin:12px 0;">
+      ${item["Price"]}
+    </div>
+    <button onclick="unlockScanner()">📷 Scan Next</button>
+  `;
+}
 
-  if (item) {
-    resultDiv.innerHTML = `
-      <div><strong>Item:</strong> ${item["Item Name"]}</div>
-      <div style="font-size:38px;margin:12px 0;">
-        <strong>Price:</strong> ${item["Price"]}
+// Display multiple variants
+function showVariants(barcode, items) {
+  scanLocked = true;
+
+  let html = `<div style="margin-bottom:16px;">Select option:</div>`;
+
+  items.forEach(item => {
+    html += `
+      <div class="variant">
+        <div>${item["Item Name"]}</div>
+        <div style="font-size:28px;margin:6px 0;">
+          ${item["Price"]}
+        </div>
+        <button onclick='showVariant("${barcode}", ${JSON.stringify(item)})'>
+          Select
+        </button>
       </div>
-      <button onclick="unlockScanner()">📷 Scan Next</button>
     `;
-  } else {
+  });
+
+  html += `<button onclick="unlockScanner()">Cancel</button>`;
+  resultDiv.innerHTML = html;
+}
+
+// Handle barcode scan or direct lookup
+function handleBarcode(barcode) {
+  const items = inventoryData[barcode];
+  if (!items) {
     resultDiv.innerHTML = `
-      <div><strong>Code:</strong> ${barcode}</div>
       <div>No match found</div><br>
-      <button onclick="unlockScanner()">📷 Scan Next</button>
+      <button onclick="unlockScanner()">📷 Try Again</button>
     `;
+    return;
+  }
+
+  if (items.length === 1) {
+    showVariant(barcode, items[0]);
+  } else {
+    showVariants(barcode, items);
   }
 }
 
-// Unlock scanner
-function unlockScanner() {
-  scanLocked = false;
-  resultDiv.innerText = "Waiting for scan...";
-  barcodeInput.value = "";
-}
-
-// 🔍 Manual search (barcode OR partial item name)
+// Manual search (barcode OR item name)
 function lookupManual() {
   const input = barcodeInput.value.trim().toLowerCase();
   if (!input) return;
 
-  // Exact barcode match first
+  // Exact barcode match
   if (inventoryData[input]) {
-    showResult(input);
+    handleBarcode(input);
     return;
   }
 
-  // Collect partial name matches
+  // Partial item name search
   const matches = [];
 
   for (const barcode in inventoryData) {
-    const itemName = inventoryData[barcode]["Item Name"]?.toLowerCase();
-    if (itemName && itemName.includes(input)) {
-      matches.push({
-        barcode,
-        name: inventoryData[barcode]["Item Name"],
-        price: inventoryData[barcode]["Price"]
-      });
-    }
+    inventoryData[barcode].forEach(item => {
+      if (item["Item Name"].toLowerCase().includes(input)) {
+        matches.push({ barcode, item });
+      }
+    });
   }
 
-  // No matches
   if (matches.length === 0) {
     resultDiv.innerHTML = `
       <div>No matches found</div><br>
@@ -198,35 +230,36 @@ function lookupManual() {
     return;
   }
 
-  // Single match → auto-select
   if (matches.length === 1) {
-    showResult(matches[0].barcode);
+    showVariant(matches[0].barcode, matches[0].item);
     return;
   }
 
-  // Multiple matches → show list
   let html = `<div style="margin-bottom:16px;">Multiple matches:</div>`;
 
   matches.forEach(m => {
     html += `
-      <div style="
-        border:2px solid #333;
-        border-radius:12px;
-        padding:14px;
-        margin-bottom:12px;
-        background:#fff;
-      ">
-        <div>${m.name}</div>
-        <div style="font-size:24px;margin:6px 0;">
-          ${m.price}
+      <div class="variant">
+        <div>${m.item["Item Name"]}</div>
+        <div style="font-size:28px;margin:6px 0;">
+          ${m.item["Price"]}
         </div>
-        <button onclick="showResult('${m.barcode}')">Select</button>
+        <button onclick='showVariant("${m.barcode}", ${JSON.stringify(m.item)})'>
+          Select
+        </button>
       </div>
     `;
   });
 
   html += `<button onclick="unlockScanner()">Cancel</button>`;
   resultDiv.innerHTML = html;
+}
+
+// Unlock scanner
+function unlockScanner() {
+  scanLocked = false;
+  resultDiv.innerText = "Waiting for scan...";
+  barcodeInput.value = "";
 }
 
 // Start scanner
@@ -261,7 +294,7 @@ function startScanner() {
 
     Quagga.onDetected(data => {
       if (scanLocked) return;
-      showResult(data.codeResult.code);
+      handleBarcode(data.codeResult.code);
     });
   });
 }
@@ -271,4 +304,3 @@ document.addEventListener("DOMContentLoaded", startScanner);
 
 </body>
 </html>
-
