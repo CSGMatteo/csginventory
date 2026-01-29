@@ -123,13 +123,15 @@ function enterPriceMode() {
   currentMode = "price";
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
+  resultDiv.innerText = "Waiting for scan...";
 }
 
 function enterSignOutMode() {
+  // Instead of opening scanner, show Coming Soon message
   currentMode = "signout";
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
-  resultDiv.innerText = "Scan samples to add (Sign Out Mode)";
+  resultDiv.innerHTML = "<div style='font-size:32px;margin-top:40px;'>📋 Sample Sign Out is Under Maintenance (Coming Soon)</div>";
 }
 
 /* ================== UTIL ================== */
@@ -286,7 +288,7 @@ function startScanner() {
     });
 
     Quagga.onDetected(data => {
-      if (scanLocked) return;
+      if (scanLocked || currentMode !== "price") return; // Scanner only active in Price mode
       handleBarcode(data.codeResult.code);
     });
   });
