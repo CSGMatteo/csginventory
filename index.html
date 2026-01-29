@@ -79,8 +79,8 @@
 <!-- Landing Page -->
 <div id="landing-page">
   <div id="landing-buttons">
-    <button onclick="openPriceCheck()">Price Check</button>
-    <button onclick="openSignOut()">Sample Sign Out</button>
+    <button onclick="openPriceCheck()">💲 Price Check</button>
+    <button onclick="openSignOut()">📋 Sample Sign Out</button>
   </div>
 </div>
 
@@ -90,7 +90,12 @@
 
   <div id="video"></div>
 
-  <input type="text" id="barcodeInput" placeholder="Enter barcode or item name" onkeydown="if(event.key==='Enter') lookupManual()"/>
+  <input
+    type="text"
+    id="barcodeInput"
+    placeholder="Enter barcode or item name"
+    onkeydown="if(event.key==='Enter') lookupManual()"
+  />
   <button onclick="lookupManual()">Search</button>
 
   <div id="result">Waiting for scan...</div>
@@ -99,12 +104,17 @@
 <!-- Sample Sign Out Page -->
 <div id="signout-page" class="hidden">
   <button onclick="goHome()">🏠 Back</button>
-  <h2>Sample Sign Out Page (Coming Soon)</h2>
+  <h2>📋 Sample Sign Out</h2>
+  <p style="margin-top:20px;">
+    This section will be built later.<br>
+    Camera intentionally disabled here.
+  </p>
 </div>
 
 <script>
-// ------------------ Page Navigation ------------------
+/* ------------------ Navigation ------------------ */
 function showPage(pageId) {
+  stopScanner();
   document.getElementById('landing-page').classList.add('hidden');
   document.getElementById('price-check-page').classList.add('hidden');
   document.getElementById('signout-page').classList.add('hidden');
@@ -117,39 +127,44 @@ function goHome() {
 
 function openPriceCheck() {
   showPage('price-check-page');
-  startScanner(); // Start the Quagga scanner when Price Check opens
+  startScanner();
 }
 
 function openSignOut() {
   showPage('signout-page');
 }
 
-// ------------------ Current Price Check Code ------------------
+/* ------------------ Price Check Logic ------------------ */
 const resultDiv = document.getElementById("result");
 const barcodeInput = document.getElementById("barcodeInput");
 let scanLocked = false;
+let scannerRunning = false;
 
 const SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" + new Date().getTime();
+  "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" + Date.now();
 
 let inventoryData = {};
 
 function formatSizeQuotes(text) {
   if (!text) return "";
   text = text.replace(/\b(\d+(?:-\d+)?\/\d+)\b/g, '$1"');
-  text = text.replace(/x\s*(\d+)(?!-\d+\/\d+)/g, 'x $1"');
+  text = text.replace(/x\s*(\d+)/g, 'x $1"');
   return text;
 }
 
 async function loadInventory() {
   const response = await fetch(SHEET_URL);
   const text = await response.text();
-  const rows = text.split("\n").map(r => r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []);
+  const rows = text.split("\n").map(r =>
+    r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
+  );
   const headers = rows[0];
   rows.slice(1).forEach(row => {
     if (!row[0]) return;
     const entry = {};
-    headers.forEach((h, i) => { entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || ""; });
+    headers.forEach((h, i) => {
+      entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
+    });
     const barcode = row[0].trim();
     if (!inventoryData[barcode]) inventoryData[barcode] = [];
     inventoryData[barcode].push(entry);
@@ -158,7 +173,6 @@ async function loadInventory() {
 
 function showVariant(barcode, item) {
   scanLocked = true;
-  if (navigator.vibrate) navigator.vibrate(100);
   resultDiv.innerHTML = `
     <div>${formatSizeQuotes(item["Item Name"])}</div>
     <div style="font-size:38px;margin:12px 0;">${item["Price"]}</div>
@@ -175,7 +189,8 @@ function showVariants(barcode, items) {
         <div>${formatSizeQuotes(item["Item Name"])}</div>
         <div style="font-size:28px;margin:6px 0;">${item["Price"]}</div>
         <button onclick='showVariant("${barcode}", ${JSON.stringify(item)})'>Select</button>
-      </div>`;
+      </div>
+    `;
   });
   html += `<button onclick="unlockScanner()">Cancel</button>`;
   resultDiv.innerHTML = html;
@@ -184,28 +199,34 @@ function showVariants(barcode, items) {
 function handleBarcode(barcode) {
   const items = inventoryData[barcode];
   if (!items) {
-    resultDiv.innerHTML = `<div>No match found</div><br><button onclick="unlockScanner()">📷 Try Again</button>`;
+    resultDiv.innerHTML = `No match found<br><button onclick="unlockScanner()">Try Again</button>`;
     return;
   }
-  if (items.length === 1) showVariant(barcode, items[0]);
-  else showVariants(barcode, items);
+  items.length === 1 ? showVariant(barcode, items[0]) : showVariants(barcode, items);
 }
 
 function lookupManual() {
   const input = barcodeInput.value.trim().toLowerCase();
   if (!input) return;
-  if (inventoryData[input]) { handleBarcode(input); return; }
+
+  if (inventoryData[input]) return handleBarcode(input);
+
   const matches = [];
   for (const barcode in inventoryData) {
     inventoryData[barcode].forEach(item => {
-      if (item["Item Name"].toLowerCase().includes(input)) matches.push({ barcode, item });
+      if (item["Item Name"].toLowerCase().includes(input)) {
+        matches.push({ barcode, item });
+      }
     });
   }
-  if (matches.length === 0) {
-    resultDiv.innerHTML = `<div>No matches found</div><br><button onclick="unlockScanner()">📷 Try Again</button>`;
+
+  if (!matches.length) {
+    resultDiv.innerHTML = `No matches found<br><button onclick="unlockScanner()">Try Again</button>`;
     return;
   }
-  if (matches.length === 1) { showVariant(matches[0].barcode, matches[0].item); return; }
+
+  if (matches.length === 1) return showVariant(matches[0].barcode, matches[0].item);
+
   let html = `<div style="margin-bottom:16px;">Multiple matches:</div>`;
   matches.forEach(m => {
     html += `
@@ -213,7 +234,8 @@ function lookupManual() {
         <div>${formatSizeQuotes(m.item["Item Name"])}</div>
         <div style="font-size:28px;margin:6px 0;">${m.item["Price"]}</div>
         <button onclick='showVariant("${m.barcode}", ${JSON.stringify(m.item)})'>Select</button>
-      </div>`;
+      </div>
+    `;
   });
   html += `<button onclick="unlockScanner()">Cancel</button>`;
   resultDiv.innerHTML = html;
@@ -226,18 +248,37 @@ function unlockScanner() {
 }
 
 function startScanner() {
+  if (scannerRunning) return;
+  scannerRunning = true;
+
   loadInventory().then(() => {
     Quagga.init({
-      inputStream: { name: "Live", type: "LiveStream", target: document.querySelector("#video"),
-        constraints: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-        area: { top: "40%", bottom: "40%", left: "10%", right: "10%" }
+      inputStream: {
+        type: "LiveStream",
+        target: document.querySelector("#video"),
+        constraints: { facingMode: "environment" }
       },
       decoder: { readers: ["code_128_reader"] },
       locate: true
-    }, err => { if (err) { resultDiv.innerText = "Camera error. Check permissions."; return; } Quagga.start(); });
+    }, err => {
+      if (err) {
+        resultDiv.innerText = "Camera error.";
+        return;
+      }
+      Quagga.start();
+    });
 
-    Quagga.onDetected(data => { if (scanLocked) return; handleBarcode(data.codeResult.code); });
+    Quagga.onDetected(data => {
+      if (!scanLocked) handleBarcode(data.codeResult.code);
+    });
   });
+}
+
+function stopScanner() {
+  if (scannerRunning) {
+    Quagga.stop();
+    scannerRunning = false;
+  }
 }
 </script>
 
