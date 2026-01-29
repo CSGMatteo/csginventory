@@ -17,7 +17,10 @@
     margin: 0 auto;
   }
 
-  h1 { font-size: 34px; margin-bottom: 12px; }
+  h1 {
+    font-size: 34px;
+    margin-bottom: 16px;
+  }
 
   #video {
     width: 100%;
@@ -29,20 +32,52 @@
     position: relative;
     overflow: hidden;
   }
-
+/* Red Line
+  #video::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 5%;
+    right: 5%;
+    height: 3px;
+    background: rgba(255, 0, 0, 0.7);
+    transform: translateY(-50%);
+  }
+*/
   #video video, #video canvas {
     width: 100% !important;
     height: 100% !important;
     object-fit: cover;
+    display: block;
   }
 
-  input, button {
+  input {
     padding: 18px;
     font-size: 26px;
     width: 100%;
     max-width: 420px;
-    margin: 8px auto;
+    margin-bottom: 12px;
+  }
+
+  button {
+    padding: 18px 22px;
+    font-size: 26px;
+    width: 100%;
+    max-width: 420px;
+    cursor: pointer;
     border-radius: 14px;
+    margin-top: 8px;
+  }
+
+  #result {
+    margin-top: 28px;
+    font-size: 30px;
+    padding: 22px;
+    border: 3px solid #333;
+    border-radius: 16px;
+    background: #f4f4f4;
+    line-height: 1.4;
+    font-weight: bold;
   }
 
   .variant {
@@ -52,24 +87,12 @@
     margin-bottom: 12px;
     background: #fff;
   }
-
-  #result {
-    margin-top: 24px;
-    padding: 20px;
-    border: 3px solid #333;
-    border-radius: 16px;
-    background: #f4f4f4;
-    font-weight: bold;
-  }
 </style>
 </head>
 
 <body>
 
 <h1>📦 Inventory Barcode Scanner</h1>
-
-<!-- ✅ ADDED -->
-<button onclick="enterSignOutMode()">📝 Sign Out Samples</button>
 
 <div id="video"></div>
 
@@ -85,192 +108,206 @@
 <div id="result">Waiting for scan...</div>
 
 <script>
-/* ===============================
-   CONFIG
-================================ */
-const WEB_APP_URL = "https://script.google.com/u/0/home/projects/1FlZkWEFjol2w5_VnvVOr5-xF6dfuVVY4U11IVqA0JqmLuXbtNZln7cLy/edit";
-
-/* ===============================
-   STATE
-================================ */
-let scanLocked = false;
-let signOutMode = false;
-let signOutList = [];
-let inventoryData = {};
-
 const resultDiv = document.getElementById("result");
 const barcodeInput = document.getElementById("barcodeInput");
 
-/* ===============================
-   LOAD INVENTORY
-================================ */
-const SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" +
-  new Date().getTime();
+let scanLocked = false;
 
+const SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t="
+  + new Date().getTime();
+
+let inventoryData = {};
+
+/* ===============================
+   SIZE QUOTE FIX (DISPLAY ONLY)
+================================ */
+function formatSizeQuotes(text) {
+  if (!text) return "";
+
+  // Add quotes to fractions FIRST (3/4, 4-1/4)
+  text = text.replace(/\b(\d+(?:-\d+)?\/\d+)\b/g, '$1"');
+
+  // Add quotes to whole numbers after x ONLY if not followed by -fraction
+  text = text.replace(/x\s*(\d+)(?!-\d+\/\d+)/g, 'x $1"');
+
+  return text;
+}
+
+// Load inventory
 async function loadInventory() {
   const response = await fetch(SHEET_URL);
   const text = await response.text();
+
   const rows = text.split("\n").map(r =>
     r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
   );
 
   const headers = rows[0];
+
   rows.slice(1).forEach(row => {
     if (!row[0]) return;
+
     const entry = {};
     headers.forEach((h, i) => {
       entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
     });
+
     const barcode = row[0].trim();
     if (!inventoryData[barcode]) inventoryData[barcode] = [];
     inventoryData[barcode].push(entry);
   });
 }
 
-/* ===============================
-   SIGN-OUT MODE UI
-================================ */
-function enterSignOutMode() {
-  signOutMode = true;
-  signOutList = [];
-  resultDiv.innerHTML = `
-    <strong>Sign-Out List</strong>
-    <div id="cart"></div>
-    <button onclick="unlockScanner()">➕ Add Sample</button>
-    <hr>
-    <input id="custName" placeholder="Customer Name">
-    <input id="custPhone" placeholder="Customer Phone">
-    <button onclick="submitSignOut()">✅ Submit</button>
-    <button onclick="exitSignOut()">❌ Cancel</button>
-  `;
-}
-
-function exitSignOut() {
-  signOutMode = false;
-  signOutList = [];
-  unlockScanner();
-}
-
-function updateCart() {
-  const cart = document.getElementById("cart");
-  cart.innerHTML = signOutList.map((b, i) => `
-    <div>
-      ${b}
-      <button onclick="removeItem(${i})">❌</button>
-    </div>
-  `).join("");
-}
-
-function removeItem(i) {
-  signOutList.splice(i, 1);
-  updateCart();
-}
-
-/* ===============================
-   BARCODE HANDLING
-================================ */
+// Display single variant
 function showVariant(barcode, item) {
-  if (signOutMode) {
-    signOutList.push(barcode);
-    updateCart();
-    unlockScanner();
-    return;
-  }
-
   scanLocked = true;
+  if (navigator.vibrate) navigator.vibrate(100);
+
   resultDiv.innerHTML = `
-    <div>${item["Item Name"]}</div>
-    <div style="font-size:38px">${item["Price"]}</div>
+    <div>${formatSizeQuotes(item["Item Name"])}</div>
+    <div style="font-size:38px;margin:12px 0;">
+      ${item["Price"]}
+    </div>
     <button onclick="unlockScanner()">📷 Scan Next</button>
   `;
 }
 
+// Display multiple variants
+function showVariants(barcode, items) {
+  scanLocked = true;
+
+  let html = `<div style="margin-bottom:16px;">Select option:</div>`;
+
+  items.forEach(item => {
+    html += `
+      <div class="variant">
+        <div>${formatSizeQuotes(item["Item Name"])}</div>
+        <div style="font-size:28px;margin:6px 0;">
+          ${item["Price"]}
+        </div>
+        <button onclick='showVariant("${barcode}", ${JSON.stringify(item)})'>
+          Select
+        </button>
+      </div>
+    `;
+  });
+
+  html += `<button onclick="unlockScanner()">Cancel</button>`;
+  resultDiv.innerHTML = html;
+}
+
+// Handle barcode scan or direct lookup
 function handleBarcode(barcode) {
   const items = inventoryData[barcode];
   if (!items) {
-    resultDiv.innerHTML = `<div>No match</div><button onclick="unlockScanner()">Try Again</button>`;
+    resultDiv.innerHTML = `
+      <div>No match found</div><br>
+      <button onclick="unlockScanner()">📷 Try Again</button>
+    `;
     return;
   }
-  items.length === 1
-    ? showVariant(barcode, items[0])
-    : showVariants(barcode, items);
+
+  if (items.length === 1) {
+    showVariant(barcode, items[0]);
+  } else {
+    showVariants(barcode, items);
+  }
 }
 
-function showVariants(barcode, items) {
-  scanLocked = true;
-  resultDiv.innerHTML = items.map(item => `
-    <div class="variant">
-      ${item["Item Name"]}<br>
-      ${item["Price"]}
-      <button onclick='showVariant("${barcode}", ${JSON.stringify(item)})'>Select</button>
-    </div>
-  `).join("");
-}
-
-/* ===============================
-   MANUAL SEARCH
-================================ */
+// Manual search
 function lookupManual() {
   const input = barcodeInput.value.trim().toLowerCase();
-  if (inventoryData[input]) handleBarcode(input);
-}
+  if (!input) return;
 
-/* ===============================
-   SUBMIT TO GOOGLE SHEETS
-================================ */
-async function submitSignOut() {
-  const name = document.getElementById("custName").value.trim();
-  const phone = document.getElementById("custPhone").value.trim();
-
-  if (!name || !phone || !signOutList.length) {
-    alert("Missing info or no samples added");
+  if (inventoryData[input]) {
+    handleBarcode(input);
     return;
   }
 
-  const res = await fetch(WEB_APP_URL, {
-    method: "POST",
-    body: JSON.stringify({
-      customerName: name,
-      customerPhone: phone,
-      barcodes: signOutList
-    })
+  const matches = [];
+
+  for (const barcode in inventoryData) {
+    inventoryData[barcode].forEach(item => {
+      if (item["Item Name"].toLowerCase().includes(input)) {
+        matches.push({ barcode, item });
+      }
+    });
+  }
+
+  if (matches.length === 0) {
+    resultDiv.innerHTML = `
+      <div>No matches found</div><br>
+      <button onclick="unlockScanner()">📷 Try Again</button>
+    `;
+    return;
+  }
+
+  if (matches.length === 1) {
+    showVariant(matches[0].barcode, matches[0].item);
+    return;
+  }
+
+  let html = `<div style="margin-bottom:16px;">Multiple matches:</div>`;
+
+  matches.forEach(m => {
+    html += `
+      <div class="variant">
+        <div>${formatSizeQuotes(m.item["Item Name"])}</div>
+        <div style="font-size:28px;margin:6px 0;">
+          ${m.item["Price"]}
+        </div>
+        <button onclick='showVariant("${m.barcode}", ${JSON.stringify(m.item)})'>
+          Select
+        </button>
+      </div>
+    `;
   });
 
-  const json = await res.json();
-
-  if (json.success) {
-    alert(`Signed out ${json.updated} samples`);
-    exitSignOut();
-  } else {
-    alert("Error: " + json.error);
-  }
+  html += `<button onclick="unlockScanner()">Cancel</button>`;
+  resultDiv.innerHTML = html;
 }
 
-/* ===============================
-   SCANNER
-================================ */
+// Unlock scanner
 function unlockScanner() {
   scanLocked = false;
+  resultDiv.innerText = "Waiting for scan...";
   barcodeInput.value = "";
-  if (!signOutMode) resultDiv.innerText = "Waiting for scan...";
 }
 
+// Start scanner
 function startScanner() {
   loadInventory().then(() => {
     Quagga.init({
       inputStream: {
+        name: "Live",
         type: "LiveStream",
         target: document.querySelector("#video"),
-        constraints: { facingMode: "environment" }
+        constraints: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        area: {
+          top: "40%",
+          bottom: "40%",
+          left: "10%",
+          right: "10%"
+        }
       },
-      decoder: { readers: ["code_128_reader"] }
+      decoder: { readers: ["code_128_reader"] },
+      locate: true
     }, err => {
-      if (!err) Quagga.start();
+      if (err) {
+        resultDiv.innerText = "Camera error. Check permissions.";
+        return;
+      }
+      Quagga.start();
     });
 
-    Quagga.onDetected(d => {
-      if (!scanLocked) handleBarcode(d.codeResult.code);
+    Quagga.onDetected(data => {
+      if (scanLocked) return;
+      handleBarcode(data.codeResult.code);
     });
   });
 }
