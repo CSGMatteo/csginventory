@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Inventory Scanner App</title>
 
-<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@latest"></script>
 
 <style>
 body {
@@ -36,15 +36,13 @@ button {
   border: 4px solid #222;
   border-radius: 16px;
   margin: 20px auto;
-  position: relative;
   overflow: hidden;
 }
 
-#video video, #video canvas {
-  width: 100% !important;
-  height: 100% !important;
+#video video {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  display: block;
 }
 
 #result {
@@ -54,7 +52,6 @@ button {
   border: 3px solid #333;
   border-radius: 16px;
   background: #f4f4f4;
-  line-height: 1.4;
   font-weight: bold;
 }
 
@@ -84,7 +81,9 @@ button {
 <div id="scanner-ui" class="hidden">
   <button onclick="goHome()">🏠 Home</button>
 
-  <div id="video"></div>
+  <div id="video">
+    <video id="camera" autoplay muted playsinline></video>
+  </div>
 
   <input
     type="text"
@@ -98,24 +97,24 @@ button {
 </div>
 
 <script>
-/* ================== GLOBAL STATE ================== */
+/* ================= STATE ================= */
 let currentMode = "price";
 let scanLocked = false;
+let inventoryData = {};
 
 const resultDiv = document.getElementById("result");
 const barcodeInput = document.getElementById("barcodeInput");
 
+/* ================= INVENTORY ================= */
 const SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" +
-  new Date().getTime();
+  Date.now();
 
-let inventoryData = {};
-
-/* ================== NAVIGATION ================== */
+/* ================= NAV ================= */
 function goHome() {
-  document.getElementById("landing").classList.remove("hidden");
+  stopScanner();
   document.getElementById("scanner-ui").classList.add("hidden");
-  resultDiv.innerText = "Waiting for scan...";
+  document.getElementById("landing").classList.remove("hidden");
   scanLocked = false;
 }
 
@@ -124,178 +123,85 @@ function enterPriceMode() {
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
   resultDiv.innerText = "Waiting for scan...";
+  startScanner();
 }
 
 function enterSignOutMode() {
-  // Instead of opening scanner, show Coming Soon message
   currentMode = "signout";
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
-  resultDiv.innerHTML = "<div style='font-size:32px;margin-top:40px;'>📋 Sample Sign Out is Under Maintenance (Coming Soon)</div>";
+  resultDiv.innerHTML =
+    "📋 Sample Sign Out is Under Maintenance<br>(Coming Soon)";
+  stopScanner();
 }
 
-/* ================== UTIL ================== */
-function formatSizeQuotes(text) {
-  if (!text) return "";
-  text = text.replace(/\b(\d+(?:-\d+)?\/\d+)\b/g, '$1"');
-  text = text.replace(/x\s*(\d+)(?!-\d+\/\d+)/g, 'x $1"');
-  return text;
-}
-
-/* ================== LOAD INVENTORY ================== */
+/* ================= LOAD INVENTORY ================= */
 async function loadInventory() {
   const res = await fetch(SHEET_URL);
   const text = await res.text();
+  const rows = text.split("\n").map(r => r.split(","));
+  const headers = rows.shift();
 
-  const rows = text.split("\n").map(r =>
-    r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
-  );
-
-  const headers = rows[0];
-
-  rows.slice(1).forEach(row => {
-    if (!row[0]) return;
-    const entry = {};
-    headers.forEach((h, i) => {
-      entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
-    });
-    const barcode = row[0].trim();
-    if (!inventoryData[barcode]) inventoryData[barcode] = [];
-    inventoryData[barcode].push(entry);
+  rows.forEach(r => {
+    if (!r[0]) return;
+    const item = {};
+    headers.forEach((h, i) => item[h.trim()] = (r[i] || "").replace(/"/g,""));
+    if (!inventoryData[r[0]]) inventoryData[r[0]] = [];
+    inventoryData[r[0]].push(item);
   });
 }
 
-/* ================== DISPLAY ================== */
-function showVariant(barcode, item) {
+/* ================= DISPLAY ================= */
+function showVariant(item) {
   scanLocked = true;
   resultDiv.innerHTML = `
-    <div>${formatSizeQuotes(item["Item Name"])}</div>
-    <div style="font-size:38px;margin:12px 0;">
-      ${item["Price"]}
-    </div>
+    <div>${item["Item Name"]}</div>
+    <div style="font-size:36px">${item["Price"]}</div>
     <button onclick="unlockScanner()">📷 Scan Next</button>
   `;
 }
 
-function showVariants(barcode, items) {
-  scanLocked = true;
-  let html = `<div style="margin-bottom:16px;">Select option:</div>`;
-  items.forEach(item => {
-    html += `
-      <div class="variant">
-        <div>${formatSizeQuotes(item["Item Name"])}</div>
-        <div style="font-size:28px;margin:6px 0;">
-          ${item["Price"]}
-        </div>
-        <button onclick='showVariant("${barcode}", ${JSON.stringify(item)})'>
-          Select
-        </button>
-      </div>
-    `;
-  });
-  html += `<button onclick="unlockScanner()">Cancel</button>`;
-  resultDiv.innerHTML = html;
-}
-
-/* ================== HANDLERS ================== */
-function handleBarcode(barcode) {
-  const items = inventoryData[barcode];
+function handleBarcode(code) {
+  if (scanLocked) return;
+  const items = inventoryData[code];
   if (!items) {
-    resultDiv.innerHTML = `
-      <div>No match found</div><br>
-      <button onclick="unlockScanner()">Try Again</button>
-    `;
+    resultDiv.innerHTML = "No match found";
     return;
   }
-  if (items.length === 1) showVariant(barcode, items[0]);
-  else showVariants(barcode, items);
+  showVariant(items[0]);
 }
 
 function lookupManual() {
-  const input = barcodeInput.value.trim().toLowerCase();
-  if (!input) return;
-
-  if (inventoryData[input]) {
-    handleBarcode(input);
-    return;
-  }
-
-  const matches = [];
-  for (const barcode in inventoryData) {
-    inventoryData[barcode].forEach(item => {
-      if (item["Item Name"].toLowerCase().includes(input)) {
-        matches.push({ barcode, item });
-      }
-    });
-  }
-
-  if (matches.length === 0) {
-    resultDiv.innerHTML = `<div>No matches</div>`;
-    return;
-  }
-
-  if (matches.length === 1) {
-    showVariant(matches[0].barcode, matches[0].item);
-    return;
-  }
-
-  let html = `<div>Multiple matches:</div>`;
-  matches.forEach(m => {
-    html += `
-      <div class="variant">
-        <div>${formatSizeQuotes(m.item["Item Name"])}</div>
-        <div>${m.item["Price"]}</div>
-        <button onclick='showVariant("${m.barcode}", ${JSON.stringify(m.item)})'>
-          Select
-        </button>
-      </div>
-    `;
-  });
-  resultDiv.innerHTML = html;
+  handleBarcode(barcodeInput.value.trim());
 }
 
 function unlockScanner() {
   scanLocked = false;
-  barcodeInput.value = "";
-  resultDiv.innerText = currentMode === "price"
-    ? "Waiting for scan..."
-    : "Scan next sample...";
+  resultDiv.innerText = "Waiting for scan...";
 }
 
-/* ================== SCANNER ================== */
-function startScanner() {
-  loadInventory().then(() => {
-    Quagga.init({
-      inputStream: {
-        name: "Live",
-        type: "LiveStream",
-        target: document.querySelector("#video"),
-        constraints: {
-          facingMode: "environment",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        area: { top: "40%", bottom: "40%", left: "10%", right: "10%" }
-      },
-      decoder: { readers: ["code_128_reader"] },
-      locate: true
-    }, err => {
-      if (err) {
-        resultDiv.innerText = "Camera error.";
-        return;
-      }
-      Quagga.start();
-    });
+/* ================= ZXING SCANNER ================= */
+const codeReader = new ZXing.BrowserMultiFormatReader();
+let activeStream = null;
 
-    Quagga.onDetected(data => {
-      if (scanLocked || currentMode !== "price") return; // Scanner only active in Price mode
-      handleBarcode(data.codeResult.code);
-    });
+async function startScanner() {
+  if (!Object.keys(inventoryData).length) await loadInventory();
+
+  const video = document.getElementById("camera");
+  const devices = await codeReader.listVideoInputDevices();
+  const deviceId = devices[devices.length - 1].deviceId;
+
+  codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
+    if (result && currentMode === "price" && !scanLocked) {
+      handleBarcode(result.text);
+    }
   });
 }
 
-document.addEventListener("DOMContentLoaded", startScanner);
-</script>
+function stopScanner() {
+  codeReader.reset();
+}
 
+</script>
 </body>
 </html>
