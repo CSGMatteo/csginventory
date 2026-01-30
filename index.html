@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Inventory Scanner App</title>
 
-<script src="https://unpkg.com/@zxing/library@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
 
 <style>
 body {
@@ -29,6 +29,14 @@ button {
   margin-top: 12px;
 }
 
+input {
+  font-size: 24px;
+  padding: 12px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 10px;
+}
+
 #video {
   width: 100%;
   max-width: 650px;
@@ -39,20 +47,8 @@ button {
   overflow: hidden;
 }
 
-#video video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-#result {
-  margin-top: 28px;
-  font-size: 30px;
-  padding: 22px;
-  border: 3px solid #333;
-  border-radius: 16px;
-  background: #f4f4f4;
-  font-weight: bold;
+#result, #cart {
+  margin-top: 20px;
 }
 
 .variant {
@@ -81,40 +77,44 @@ button {
 <div id="scanner-ui" class="hidden">
   <button onclick="goHome()">🏠 Home</button>
 
-  <div id="video">
-    <video id="camera" autoplay muted playsinline></video>
-  </div>
-
-  <input
-    type="text"
-    id="barcodeInput"
-    placeholder="Enter barcode or item name"
-    onkeydown="if(event.key==='Enter') lookupManual()"
-  />
-  <button onclick="lookupManual()">Search</button>
+  <div id="video"></div>
 
   <div id="result">Waiting for scan...</div>
+
+  <!-- SIGN OUT CONTROLS -->
+  <div id="signout-ui" class="hidden">
+    <div id="cart"></div>
+
+    <input id="customerName" placeholder="Customer Name">
+    <input id="customerPhone" placeholder="Customer Phone">
+
+    <button onclick="submitSignOut()">✅ Sign Out Samples</button>
+  </div>
 </div>
 
 <script>
 /* ================= STATE ================= */
 let currentMode = "price";
 let scanLocked = false;
-let inventoryData = {};
+let cart = [];
 
 const resultDiv = document.getElementById("result");
-const barcodeInput = document.getElementById("barcodeInput");
+const cartDiv = document.getElementById("cart");
 
-/* ================= INVENTORY ================= */
 const SHEET_URL =
   "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" +
   Date.now();
 
+let inventoryData = {};
+
 /* ================= NAV ================= */
 function goHome() {
-  stopScanner();
-  document.getElementById("scanner-ui").classList.add("hidden");
   document.getElementById("landing").classList.remove("hidden");
+  document.getElementById("scanner-ui").classList.add("hidden");
+  document.getElementById("signout-ui").classList.add("hidden");
+  resultDiv.innerText = "Waiting for scan...";
+  cart = [];
+  cartDiv.innerHTML = "";
   scanLocked = false;
 }
 
@@ -122,86 +122,119 @@ function enterPriceMode() {
   currentMode = "price";
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
+  document.getElementById("signout-ui").classList.add("hidden");
   resultDiv.innerText = "Waiting for scan...";
-  startScanner();
 }
 
 function enterSignOutMode() {
   currentMode = "signout";
   document.getElementById("landing").classList.add("hidden");
   document.getElementById("scanner-ui").classList.remove("hidden");
-  resultDiv.innerHTML =
-    "📋 Sample Sign Out is Under Maintenance<br>(Coming Soon)";
-  stopScanner();
+  document.getElementById("signout-ui").classList.remove("hidden");
+  resultDiv.innerText = "Scan samples to add to cart";
 }
 
 /* ================= LOAD INVENTORY ================= */
 async function loadInventory() {
   const res = await fetch(SHEET_URL);
   const text = await res.text();
-  const rows = text.split("\n").map(r => r.split(","));
-  const headers = rows.shift();
 
-  rows.forEach(r => {
-    if (!r[0]) return;
-    const item = {};
-    headers.forEach((h, i) => item[h.trim()] = (r[i] || "").replace(/"/g,""));
-    if (!inventoryData[r[0]]) inventoryData[r[0]] = [];
-    inventoryData[r[0]].push(item);
+  const rows = text.split("\n").map(r =>
+    r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
+  );
+
+  const headers = rows[0];
+
+  rows.slice(1).forEach(row => {
+    const barcode = row[0];
+    if (!barcode) return;
+
+    const entry = {};
+    headers.forEach((h, i) => {
+      entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
+    });
+
+    if (!inventoryData[barcode]) inventoryData[barcode] = [];
+    inventoryData[barcode].push(entry);
   });
 }
 
 /* ================= DISPLAY ================= */
-function showVariant(item) {
+function showVariants(barcode, items) {
   scanLocked = true;
-  resultDiv.innerHTML = `
-    <div>${item["Item Name"]}</div>
-    <div style="font-size:36px">${item["Price"]}</div>
-    <button onclick="unlockScanner()">📷 Scan Next</button>
-  `;
+  let html = `<div>Select item:</div>`;
+  items.forEach(item => {
+    html += `
+      <div class="variant">
+        <div>${item["Item Name"]}</div>
+        <button onclick='selectItem(${JSON.stringify(item)})'>Select</button>
+      </div>
+    `;
+  });
+  resultDiv.innerHTML = html;
 }
 
+function selectItem(item) {
+  if (currentMode === "price") {
+    resultDiv.innerHTML = `<div>${item["Item Name"]}<br><b>${item["Price"]}</b></div>
+      <button onclick="unlock()">Scan Next</button>`;
+  } else {
+    cart.push(item);
+    renderCart();
+    unlock();
+  }
+}
+
+function renderCart() {
+  cartDiv.innerHTML = "<h3>🛒 Cart</h3>" +
+    cart.map(i => `<div>${i["Item Name"]}</div>`).join("");
+}
+
+function unlock() {
+  scanLocked = false;
+  resultDiv.innerText =
+    currentMode === "price" ? "Waiting for scan..." : "Scan next sample...";
+}
+
+/* ================= SCAN HANDLER ================= */
 function handleBarcode(code) {
-  if (scanLocked) return;
   const items = inventoryData[code];
   if (!items) {
-    resultDiv.innerHTML = "No match found";
+    resultDiv.innerHTML = `<div>No match</div><button onclick="unlock()">Try Again</button>`;
+    scanLocked = true;
     return;
   }
-  showVariant(items[0]);
+  showVariants(code, items);
 }
 
-function lookupManual() {
-  handleBarcode(barcodeInput.value.trim());
-}
+/* ================= SCANNER ================= */
+function startScanner() {
+  loadInventory().then(() => {
+    Quagga.init({
+      inputStream: {
+        type: "LiveStream",
+        target: document.querySelector("#video"),
+        constraints: { facingMode: "environment" }
+      },
+      decoder: { readers: ["code_128_reader"] }
+    }, () => Quagga.start());
 
-function unlockScanner() {
-  scanLocked = false;
-  resultDiv.innerText = "Waiting for scan...";
-}
-
-/* ================= ZXING SCANNER ================= */
-const codeReader = new ZXing.BrowserMultiFormatReader();
-let activeStream = null;
-
-async function startScanner() {
-  if (!Object.keys(inventoryData).length) await loadInventory();
-
-  const video = document.getElementById("camera");
-  const devices = await codeReader.listVideoInputDevices();
-  const deviceId = devices[devices.length - 1].deviceId;
-
-  codeReader.decodeFromVideoDevice(deviceId, video, (result, err) => {
-    if (result && currentMode === "price" && !scanLocked) {
-      handleBarcode(result.text);
-    }
+    Quagga.onDetected(data => {
+      if (scanLocked) return;
+      scanLocked = true;
+      handleBarcode(data.codeResult.code);
+    });
   });
 }
 
-function stopScanner() {
-  codeReader.reset();
+/* ================= SUBMIT ================= */
+function submitSignOut() {
+  alert("Next step: Apps Script doPost()");
+  console.log(cart);
 }
 
+document.addEventListener("DOMContentLoaded", startScanner);
 </script>
+
 </body>
 </html>
