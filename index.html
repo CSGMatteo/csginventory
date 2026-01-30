@@ -1,41 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Inventory Scanner App</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Price Checker</title>
 
-<script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.20.0"></script>
 
 <style>
 body {
   font-family: Arial, sans-serif;
   text-align: center;
   padding: 16px;
-  font-size: 26px;
+  font-size: 24px;
   max-width: 700px;
   margin: 0 auto;
 }
 
-h1 { font-size: 34px; margin-bottom: 16px; }
-
-button {
-  padding: 18px 22px;
-  font-size: 26px;
-  width: 100%;
-  max-width: 420px;
-  cursor: pointer;
-  border-radius: 14px;
-  margin-top: 12px;
-}
-
-input {
-  font-size: 24px;
-  padding: 12px;
-  width: 100%;
-  max-width: 420px;
-  margin-top: 10px;
-}
+h1 { font-size: 32px; margin-bottom: 12px; }
 
 #video {
   width: 100%;
@@ -43,19 +25,37 @@ input {
   height: 260px;
   border: 4px solid #222;
   border-radius: 16px;
-  margin: 20px auto;
+  margin: 16px auto;
   overflow: hidden;
 }
 
-#result, #cart {
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+input, button {
+  font-size: 22px;
+  padding: 14px;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 10px;
+}
+
+#result {
   margin-top: 20px;
+  padding: 20px;
+  border: 3px solid #333;
+  border-radius: 16px;
+  background: #f4f4f4;
 }
 
 .variant {
   border: 2px solid #333;
   border-radius: 14px;
-  padding: 16px;
-  margin-bottom: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
   background: #fff;
 }
 
@@ -65,175 +65,171 @@ input {
 
 <body>
 
-<h1>📦 Inventory Scanner App</h1>
+<h1>💲 Price Checker</h1>
 
-<!-- Landing -->
-<div id="landing">
-  <button onclick="enterPriceMode()">💲 Price Check</button>
-  <button onclick="enterSignOutMode()">📋 Sample Sign Out</button>
+<div id="video">
+  <video id="videoElement"></video>
 </div>
 
-<!-- Scanner UI -->
-<div id="scanner-ui" class="hidden">
-  <button onclick="goHome()">🏠 Home</button>
+<input
+  id="searchInput"
+  placeholder="Enter barcode or product name"
+  onkeydown="if(event.key==='Enter') manualSearch()"
+/>
 
-  <div id="video"></div>
+<button onclick="manualSearch()">Search</button>
 
-  <div id="result">Waiting for scan...</div>
-
-  <!-- SIGN OUT CONTROLS -->
-  <div id="signout-ui" class="hidden">
-    <div id="cart"></div>
-
-    <input id="customerName" placeholder="Customer Name">
-    <input id="customerPhone" placeholder="Customer Phone">
-
-    <button onclick="submitSignOut()">✅ Sign Out Samples</button>
-  </div>
-</div>
+<div id="result">Waiting for scan…</div>
 
 <script>
-/* ================= STATE ================= */
-let currentMode = "price";
-let scanLocked = false;
-let cart = [];
+/* ================= CONFIG ================= */
 
-const resultDiv = document.getElementById("result");
-const cartDiv = document.getElementById("cart");
-
+// 🔴 REPLACE WITH YOUR PUBLISHED SHEET CSV
 const SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1VMPWmQUbbHK0JE_8ldfsc2G454vVPkFnLhjATuVKil8/export?format=csv&t=" +
-  Date.now();
+  "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/export?format=csv";
 
-let inventoryData = {};
+/* ================= STATE ================= */
 
-/* ================= NAV ================= */
-function goHome() {
-  document.getElementById("landing").classList.remove("hidden");
-  document.getElementById("scanner-ui").classList.add("hidden");
-  document.getElementById("signout-ui").classList.add("hidden");
-  resultDiv.innerText = "Waiting for scan...";
-  cart = [];
-  cartDiv.innerHTML = "";
-  scanLocked = false;
-}
+let inventory = {};
+let scanLocked = false;
+let codeReader;
 
-function enterPriceMode() {
-  currentMode = "price";
-  document.getElementById("landing").classList.add("hidden");
-  document.getElementById("scanner-ui").classList.remove("hidden");
-  document.getElementById("signout-ui").classList.add("hidden");
-  resultDiv.innerText = "Waiting for scan...";
-}
+/* ================= LOAD SHEET ================= */
 
-function enterSignOutMode() {
-  currentMode = "signout";
-  document.getElementById("landing").classList.add("hidden");
-  document.getElementById("scanner-ui").classList.remove("hidden");
-  document.getElementById("signout-ui").classList.remove("hidden");
-  resultDiv.innerText = "Scan samples to add to cart";
-}
-
-/* ================= LOAD INVENTORY ================= */
 async function loadInventory() {
-  const res = await fetch(SHEET_URL);
+  const res = await fetch(SHEET_URL + "&t=" + Date.now());
   const text = await res.text();
 
   const rows = text.split("\n").map(r =>
     r.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || []
   );
 
-  const headers = rows[0];
+  const headers = rows[0].map(h => h.replace(/"/g, "").trim());
 
   rows.slice(1).forEach(row => {
-    const barcode = row[0];
-    if (!barcode) return;
-
-    const entry = {};
+    const item = {};
     headers.forEach((h, i) => {
-      entry[h.trim()] = row[i]?.replace(/"/g, "").trim() || "";
+      item[h] = row[i]?.replace(/"/g, "").trim() || "";
     });
 
-    if (!inventoryData[barcode]) inventoryData[barcode] = [];
-    inventoryData[barcode].push(entry);
+    if (!item[headers[0]]) return;
+
+    const barcode = item[headers[0]];
+    if (!inventory[barcode]) inventory[barcode] = [];
+    inventory[barcode].push(item);
   });
 }
 
 /* ================= DISPLAY ================= */
-function showVariants(barcode, items) {
+
+function showSingle(item) {
+  scanLocked = true;
+  result.innerHTML = `
+    <div>${item["Item Name"]}</div>
+    <div style="font-size:36px;margin:10px 0;">
+      ${item["Price"]}
+    </div>
+    <button onclick="unlock()">Scan Next</button>
+  `;
+}
+
+function showMultiple(barcode, items) {
   scanLocked = true;
   let html = `<div>Select item:</div>`;
   items.forEach(item => {
     html += `
       <div class="variant">
         <div>${item["Item Name"]}</div>
-        <button onclick='selectItem(${JSON.stringify(item)})'>Select</button>
+        <div style="font-size:28px;">${item["Price"]}</div>
+        <button onclick='showSingle(${JSON.stringify(item)})'>Select</button>
       </div>
     `;
   });
-  resultDiv.innerHTML = html;
+  html += `<button onclick="unlock()">Cancel</button>`;
+  result.innerHTML = html;
 }
 
-function selectItem(item) {
-  if (currentMode === "price") {
-    resultDiv.innerHTML = `<div>${item["Item Name"]}<br><b>${item["Price"]}</b></div>
-      <button onclick="unlock()">Scan Next</button>`;
-  } else {
-    cart.push(item);
-    renderCart();
-    unlock();
+/* ================= LOOKUP ================= */
+
+function lookupBarcode(code) {
+  const items = inventory[code];
+  if (!items) {
+    result.innerHTML = `
+      <div>No match found</div>
+      <button onclick="unlock()">Try Again</button>
+    `;
+    scanLocked = true;
+    return;
   }
+
+  items.length === 1
+    ? showSingle(items[0])
+    : showMultiple(code, items);
 }
 
-function renderCart() {
-  cartDiv.innerHTML = "<h3>🛒 Cart</h3>" +
-    cart.map(i => `<div>${i["Item Name"]}</div>`).join("");
+function manualSearch() {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) return;
+
+  if (inventory[q]) {
+    lookupBarcode(q);
+    return;
+  }
+
+  const matches = [];
+  for (const code in inventory) {
+    inventory[code].forEach(item => {
+      if (item["Item Name"].toLowerCase().includes(q)) {
+        matches.push(item);
+      }
+    });
+  }
+
+  if (matches.length === 0) {
+    result.innerHTML = `<div>No matches</div>`;
+    return;
+  }
+
+  scanLocked = true;
+  let html = `<div>Select item:</div>`;
+  matches.forEach(item => {
+    html += `
+      <div class="variant">
+        <div>${item["Item Name"]}</div>
+        <div>${item["Price"]}</div>
+        <button onclick='showSingle(${JSON.stringify(item)})'>Select</button>
+      </div>
+    `;
+  });
+  html += `<button onclick="unlock()">Cancel</button>`;
+  result.innerHTML = html;
+}
+
+/* ================= SCANNER ================= */
+
+function startScanner() {
+  codeReader = new ZXing.BrowserMultiFormatReader();
+
+  codeReader.decodeFromVideoDevice(
+    null,
+    "videoElement",
+    (resultZX, err) => {
+      if (resultZX && !scanLocked) {
+        lookupBarcode(resultZX.text);
+      }
+    }
+  );
 }
 
 function unlock() {
   scanLocked = false;
-  resultDiv.innerText =
-    currentMode === "price" ? "Waiting for scan..." : "Scan next sample...";
+  searchInput.value = "";
+  result.innerText = "Waiting for scan…";
 }
 
-/* ================= SCAN HANDLER ================= */
-function handleBarcode(code) {
-  const items = inventoryData[code];
-  if (!items) {
-    resultDiv.innerHTML = `<div>No match</div><button onclick="unlock()">Try Again</button>`;
-    scanLocked = true;
-    return;
-  }
-  showVariants(code, items);
-}
+/* ================= INIT ================= */
 
-/* ================= SCANNER ================= */
-function startScanner() {
-  loadInventory().then(() => {
-    Quagga.init({
-      inputStream: {
-        type: "LiveStream",
-        target: document.querySelector("#video"),
-        constraints: { facingMode: "environment" }
-      },
-      decoder: { readers: ["code_128_reader"] }
-    }, () => Quagga.start());
-
-    Quagga.onDetected(data => {
-      if (scanLocked) return;
-      scanLocked = true;
-      handleBarcode(data.codeResult.code);
-    });
-  });
-}
-
-/* ================= SUBMIT ================= */
-function submitSignOut() {
-  alert("Next step: Apps Script doPost()");
-  console.log(cart);
-}
-
-document.addEventListener("DOMContentLoaded", startScanner);
+loadInventory().then(startScanner);
 </script>
 
 </body>
